@@ -50,5 +50,3 @@ func GetEntrySet[M ~map[K]V, S EntrySet[K, V], K comparable, V any](m M) S {
 	}
 	return set
 }
-
-

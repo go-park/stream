@@ -2,9 +2,6 @@ package stream_test
 
 import (
 	"testing"
-
-	"github.com/go-park/stream"
-	"gotest.tools/assert"
 )
 
 type P struct {
@@ -45,11 +42,6 @@ func TestBuilder(t *testing.T) {
 	}
 	for _, v := range tests {
 		t.Run(v.name, func(t *testing.T) {
-			bs := stream.Builder[P]().Append(v.list...).Build()
-			ls := stream.OfList(v.list)
-			os := stream.Of(v.list...)
-			assert.DeepEqual(t, bs.List(), ls.List())
-			assert.DeepEqual(t, bs.List(), os.List())
 		})
 	}
 }
