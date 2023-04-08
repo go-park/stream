@@ -3,7 +3,8 @@ package function_test
 import (
 	"testing"
 
-	"github.com/go-park/stream/function"
+	"github.com/go-park/stream/support/function"
+	"gotest.tools/assert"
 )
 
 func TestSupplier(t *testing.T) {
@@ -12,7 +13,5 @@ func TestSupplier(t *testing.T) {
 	}
 	supplier := function.Supplier[int](fn)
 	result := supplier.Get()
-	if result != 5 {
-		t.Errorf("Expected 5, got %d", result)
-	}
+	assert.Equal(t, result, 5)
 }

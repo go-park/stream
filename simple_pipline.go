@@ -3,9 +3,9 @@ package stream
 import (
 	"sort"
 
-	"github.com/go-park/stream/function"
 	"github.com/go-park/stream/internal/helper"
-	"github.com/go-park/stream/support"
+	"github.com/go-park/stream/support/function"
+	"github.com/go-park/stream/support/optional"
 )
 
 type SimplePipline[T any] struct {
@@ -74,34 +74,6 @@ func (p SimplePipline[T]) Filter(pred function.Predicate[T]) Stream[T] {
 	return p
 }
 
-func (p SimplePipline[T]) SortBy(less function.BiPredicate[T, T]) Stream[T] {
-	helper.RequireNonNil(less)
-	source := p.upstream
-	target := make(chan T)
-	p.upstream = target
-	go func() {
-		defer close(target)
-		var list []T
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					list = append(list, v)
-				} else {
-					sort.Slice(list, func(i, j int) bool {
-						return less(list[i], list[j])
-					})
-					for _, v := range list {
-						target <- v
-					}
-					return
-				}
-			}
-		}
-	}()
-	return p
-}
-
 func (p SimplePipline[T]) Limit(i uint) Stream[T] {
 	source := p.upstream
 	target := make(chan T)
@@ -152,10 +124,96 @@ func (p SimplePipline[T]) Skip(i uint) Stream[T] {
 	return p
 }
 
-func (p SimplePipline[T]) Max(less function.BiPredicate[T, T]) support.Value[T] {
+func (p SimplePipline[T]) Distinct(equals function.BiPredicate[T, T]) Stream[T] {
+	helper.RequireNonNil(equals)
+	source := p.upstream
+	target := make(chan T)
+	p.upstream = target
+	go func() {
+		defer close(target)
+		var list []T
+		for {
+			select {
+			case v, ok := <-source:
+				if ok {
+					noneMatch := From(list...).NoneMatch(
+						func(t T) bool {
+							return equals(v, t)
+						})
+					if noneMatch {
+						list = append(list, v)
+					}
+				} else {
+					for _, v := range list {
+						target <- v
+					}
+					return
+				}
+			}
+		}
+	}()
+	return p
+}
+
+func (p SimplePipline[T]) Sort(less function.BiPredicate[T, T]) Stream[T] {
+	helper.RequireNonNil(less)
+	source := p.upstream
+	target := make(chan T)
+	p.upstream = target
+	go func() {
+		defer close(target)
+		var list []T
+		for {
+			select {
+			case v, ok := <-source:
+				if ok {
+					list = append(list, v)
+				} else {
+					sort.Slice(list, func(i, j int) bool {
+						return less(list[i], list[j])
+					})
+					for _, v := range list {
+						target <- v
+					}
+					return
+				}
+			}
+		}
+	}()
+	return p
+}
+
+func (p SimplePipline[T]) Reverse() Stream[T] {
+	source := p.upstream
+	target := make(chan T)
+	p.upstream = target
+	go func() {
+		defer close(target)
+		var list []T
+		for {
+			select {
+			case v, ok := <-source:
+				if ok {
+					list = append(list, v)
+				} else {
+					for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
+						list[i], list[j] = list[j], list[i]
+					}
+					for _, v := range list {
+						target <- v
+					}
+					return
+				}
+			}
+		}
+	}()
+	return p
+}
+
+func (p SimplePipline[T]) Max(less function.BiPredicate[T, T]) optional.Value[T] {
 	helper.RequireNonNil(less)
 	var max T
-	val := support.EmptyVal[T]()
+	val := optional.EmptyVal[T]()
 	hasPre := false
 	p.ForEach(func(t T) {
 		if !hasPre {
@@ -166,15 +224,15 @@ func (p SimplePipline[T]) Max(less function.BiPredicate[T, T]) support.Value[T] 
 				max = t
 			}
 		}
-		val = support.ValOf(max)
+		val = optional.ValOf(max)
 	})
 	return val
 }
 
-func (p SimplePipline[T]) Min(less function.BiPredicate[T, T]) support.Value[T] {
+func (p SimplePipline[T]) Min(less function.BiPredicate[T, T]) optional.Value[T] {
 	helper.RequireNonNil(less)
 	var min T
-	val := support.EmptyVal[T]()
+	val := optional.EmptyVal[T]()
 	hasPre := false
 	p.ForEach(func(t T) {
 		if !hasPre {
@@ -185,7 +243,7 @@ func (p SimplePipline[T]) Min(less function.BiPredicate[T, T]) support.Value[T] 
 				min = t
 			}
 		}
-		val = support.ValOf(min)
+		val = optional.ValOf(min)
 	})
 	return val
 }
@@ -211,10 +269,10 @@ func (p SimplePipline[T]) Map(fn function.Fn[T, T]) Stream[T] {
 	return p
 }
 
-func (p SimplePipline[T]) Reduce(acc function.BiFn[T, T, T]) support.Value[T] {
+func (p SimplePipline[T]) Reduce(acc function.BiFn[T, T, T]) optional.Value[T] {
 	helper.RequireNonNil(acc)
 	var res T
-	val := support.EmptyVal[T]()
+	val := optional.EmptyVal[T]()
 	hasPre := false
 	p.ForEach(func(t T) {
 		if !hasPre {
@@ -223,7 +281,7 @@ func (p SimplePipline[T]) Reduce(acc function.BiFn[T, T, T]) support.Value[T] {
 		} else {
 			res = acc.Apply(res, t)
 		}
-		val = support.ValOf(res)
+		val = optional.ValOf(res)
 	})
 	return val
 }

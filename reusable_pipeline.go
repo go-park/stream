@@ -1,8 +1,8 @@
 package stream
 
 import (
-	"github.com/go-park/stream/function"
-	"github.com/go-park/stream/support"
+	"github.com/go-park/stream/support/function"
+	"github.com/go-park/stream/support/optional"
 )
 
 type ReusablePipline[T any] struct {
@@ -76,10 +76,6 @@ func (p ReusablePipline[T]) Filter(pred function.Predicate[T]) Stream[T] {
 	return p
 }
 
-func (p ReusablePipline[T]) SortBy(less function.BiPredicate[T, T]) Stream[T] {
-	return nil
-}
-
 func (p ReusablePipline[T]) Limit(i uint) Stream[T] {
 	return nil
 }
@@ -88,12 +84,24 @@ func (p ReusablePipline[T]) Skip(i uint) Stream[T] {
 	return nil
 }
 
-func (p ReusablePipline[T]) Max(less function.BiPredicate[T, T]) support.Value[T] {
-	return support.EmptyVal[T]()
+func (p ReusablePipline[T]) Distinct(less function.BiPredicate[T, T]) Stream[T] {
+	return nil
 }
 
-func (p ReusablePipline[T]) Min(less function.BiPredicate[T, T]) support.Value[T] {
-	return support.EmptyVal[T]()
+func (p ReusablePipline[T]) Sort(less function.BiPredicate[T, T]) Stream[T] {
+	return nil
+}
+
+func (p ReusablePipline[T]) Reverse() Stream[T] {
+	return nil
+}
+
+func (p ReusablePipline[T]) Max(less function.BiPredicate[T, T]) optional.Value[T] {
+	return optional.EmptyVal[T]()
+}
+
+func (p ReusablePipline[T]) Min(less function.BiPredicate[T, T]) optional.Value[T] {
+	return optional.EmptyVal[T]()
 }
 
 func (p ReusablePipline[T]) Map(f function.Fn[T, T]) Stream[T] {
@@ -108,8 +116,8 @@ func (p ReusablePipline[T]) Map(f function.Fn[T, T]) Stream[T] {
 	return p
 }
 
-func (p ReusablePipline[T]) Reduce(acc function.BiFn[T, T, T]) support.Value[T] {
-	return support.EmptyVal[T]()
+func (p ReusablePipline[T]) Reduce(acc function.BiFn[T, T, T]) optional.Value[T] {
+	return optional.EmptyVal[T]()
 }
 
 func (p ReusablePipline[T]) MapToAny(f function.Fn[T, any]) Stream[any] {

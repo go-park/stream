@@ -6,17 +6,20 @@ import (
 	"testing"
 
 	"github.com/go-park/stream"
-	"github.com/go-park/stream/function"
+	"github.com/go-park/stream/support/function"
 	"gotest.tools/assert"
 )
 
 type TestData[T any] struct {
 	name         string
 	list         []T
+	count        bool
 	filter       function.Predicate[T]
-	less         function.BiPredicate[T, T]
 	max          function.BiPredicate[T, T]
 	min          function.BiPredicate[T, T]
+	equals       function.BiPredicate[T, T]
+	less         function.BiPredicate[T, T]
+	reverse      bool
 	mapper       function.Fn[T, T]
 	reducer      function.BiFn[T, T, T]
 	mapperAny    func(t T) any
@@ -34,6 +37,7 @@ type TestData[T any] struct {
 		num uint
 		ok  bool
 	}
+	wantCount      int
 	wantList       []T
 	wantAnyList    []any
 	wantStringList []string
@@ -45,6 +49,13 @@ type TestData[T any] struct {
 
 func TestSimplePipline(t *testing.T) {
 	intTests := []TestData[int]{
+		{
+			name:      "count",
+			list:      []int{1, 2, 3, 4, 5},
+			count:     true,
+			wantCount: 5,
+			wantList:  nil,
+		},
 		{
 			name: "filter",
 			list: []int{1, 2, 3, 4, 5},
@@ -60,22 +71,6 @@ func TestSimplePipline(t *testing.T) {
 				return i < 1
 			},
 			wantList: nil,
-		},
-		{
-			name: "sort",
-			list: []int{2, 3, 4, 6, 1, 7, 0, 1, 8, 5, math.MaxInt, math.MinInt},
-			less: func(i, j int) bool {
-				return i < j
-			},
-			wantList: []int{math.MinInt, 0, 1, 1, 2, 3, 4, 5, 6, 7, 8, math.MaxInt},
-		},
-		{
-			name: "sort",
-			list: []int{2, 3, 4, 6, 1, 7, 0, 1, 8, 5, math.MaxInt, math.MinInt},
-			less: func(i, j int) bool {
-				return i > j
-			},
-			wantList: []int{math.MaxInt, 8, 7, 6, 5, 4, 3, 2, 1, 1, 0, math.MinInt},
 		},
 		{
 			name: "limit",
@@ -112,6 +107,36 @@ func TestSimplePipline(t *testing.T) {
 				ok  bool
 			}{num: 5, ok: true},
 			wantList: []int{7, 0, 1, 8, 5, math.MaxInt, math.MinInt},
+		},
+		{
+			name: "distinct",
+			list: []int{2, 2, 3, 2, 4, 2, 6, 1, 7, 0, 1, 8, 5, math.MaxInt, math.MinInt},
+			equals: func(i, j int) bool {
+				return i == j
+			},
+			wantList: []int{2, 3, 4, 6, 1, 7, 0, 8, 5, math.MaxInt, math.MinInt},
+		},
+		{
+			name: "sort",
+			list: []int{2, 3, 4, 6, 1, 7, 0, 1, 8, 5, math.MaxInt, math.MinInt},
+			less: func(i, j int) bool {
+				return i < j
+			},
+			wantList: []int{math.MinInt, 0, 1, 1, 2, 3, 4, 5, 6, 7, 8, math.MaxInt},
+		},
+		{
+			name: "sort",
+			list: []int{2, 3, 4, 6, 1, 7, 0, 1, 8, 5, math.MaxInt, math.MinInt},
+			less: func(i, j int) bool {
+				return i > j
+			},
+			wantList: []int{math.MaxInt, 8, 7, 6, 5, 4, 3, 2, 1, 1, 0, math.MinInt},
+		},
+		{
+			name:     "reverse",
+			list:     []int{2, 3, 4, 6, 1, 7, 0, 1, 8, 5, math.MaxInt, math.MinInt},
+			reverse:  true,
+			wantList: []int{math.MinInt, math.MaxInt, 5, 8, 1, 0, 7, 1, 6, 4, 3, 2},
 		},
 		{
 			name: "max",
@@ -245,11 +270,11 @@ func TestSimplePipline(t *testing.T) {
 	for _, v := range intTests {
 		t.Run(v.name, func(t *testing.T) {
 			pStream := stream.From(v.list...)
+			if v.count {
+				assert.Equal(t, pStream.Count(), len(v.list))
+			}
 			if v.filter != nil {
 				pStream = pStream.Filter(v.filter)
-			}
-			if v.less != nil {
-				pStream = pStream.SortBy(v.less)
 			}
 			if v.limit.ok {
 				pStream = pStream.Limit(v.limit.num)
@@ -268,6 +293,15 @@ func TestSimplePipline(t *testing.T) {
 				assert.Equal(t, val.IsEmpty(), false)
 				assert.Equal(t, val.IsNil(), false)
 				assert.DeepEqual(t, val.Get(), v.wantValue)
+			}
+			if v.equals != nil {
+				pStream = pStream.Distinct(v.equals)
+			}
+			if v.less != nil {
+				pStream = pStream.Sort(v.less)
+			}
+			if v.reverse {
+				pStream = pStream.Reverse()
 			}
 			if v.mapper != nil {
 				pStream = pStream.Map(v.mapper)
@@ -311,7 +345,7 @@ func TestSimplePipline(t *testing.T) {
 	}
 }
 
-func TestXxx(t *testing.T) {
+func TestDemo(t *testing.T) {
 	slice := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
 	v := stream.From(slice...).
 		Filter(func(t int) bool { return t > 2 }).

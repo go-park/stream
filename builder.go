@@ -2,6 +2,8 @@ package stream
 
 import (
 	"context"
+
+	"github.com/go-park/stream/support/collections"
 )
 
 func Builder[T any]() builder[T] {
@@ -9,7 +11,7 @@ func Builder[T any]() builder[T] {
 }
 
 type builder[T any] struct {
-	items    []T
+	iter     collections.Iterator[T]
 	reusable bool
 }
 
@@ -18,40 +20,49 @@ type builder[T any] struct {
 // 	return b
 // }
 
-func (b builder[T]) Append(t ...T) builder[T] {
-	b.items = append(b.items, t...)
+func (b builder[T]) Source(t ...T) builder[T] {
+	b.iter = collections.ToIterator(t...)
 	return b
 }
 
 func (b builder[T]) Build() Stream[T] {
 	if b.reusable {
-		return reusable(b.items...)
+		return reusable(b.iter)
 	}
-	return From(b.items...)
+	return b.buildSimple()
 }
 
-func FromMap[M ~map[K]V, K comparable, V any](m M) Stream[Entry[K, V]] {
-	return From(GetEntrySet(m)...)
-}
-
-func From[T any](list ...T) Stream[T] {
+func (b builder[T]) buildSimple() Stream[T] {
 	target := make(chan T)
 	ctx, cancelFn := context.WithCancel(context.Background())
 	go func() {
 		defer close(target)
-		for _, v := range list {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				target <- v
-			}
-		}
+		b.iter.ForEachRemaining(
+			func(v T) {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					target <- v
+				}
+			})
 	}()
 	return SimplePipline[T]{upstream: target, cancel: cancelFn}
 }
 
-func reusable[T any](list ...T) Stream[T] {
+func (b builder[T]) buildReusable() Stream[T] {
+	return reusable(b.iter)
+}
+
+func FromMap[M ~map[K]V, K comparable, V any](m M) Stream[collections.Entry[K, V]] {
+	return From(collections.GetEntrySet(m)...)
+}
+
+func From[T any](list ...T) Stream[T] {
+	return Builder[T]().Source(list...).Build()
+}
+
+func reusable[T any](iter collections.Iterator[T]) Stream[T] {
 	// target := make(chan T)
 	// ctx, cancelFn := context.WithCancel(context.Background())
 	// go func() {

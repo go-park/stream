@@ -3,7 +3,7 @@ package function_test
 import (
 	"testing"
 
-	"github.com/go-park/stream/function"
+	"github.com/go-park/stream/support/function"
 )
 
 // Test for Test()

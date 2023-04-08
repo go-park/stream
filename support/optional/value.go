@@ -1,22 +1,22 @@
-package support
+package optional
 
 import (
-	"github.com/go-park/stream/function"
 	"github.com/go-park/stream/internal/helper"
+	"github.com/go-park/stream/support/function"
 )
 
-type Value[V any] struct {
-	v        V
+type Value[T any] struct {
+	v        T
 	nonEmpty bool
 }
 
-func ValOf[V any](v V) Value[V] {
+func ValOf[T any](v T) Value[T] {
 	helper.RequireNonNil(v)
-	return Value[V]{v: v, nonEmpty: true}
+	return Value[T]{v: v, nonEmpty: true}
 }
 
-func EmptyVal[V any]() Value[V] {
-	return Value[V]{}
+func EmptyVal[T any]() Value[T] {
+	return Value[T]{}
 }
 
 func (v Value[T]) IsEmpty() bool {
@@ -31,7 +31,7 @@ func (v Value[T]) IfNotEmpty(fn function.Consumer[T]) {
 }
 
 func (v Value[T]) IsNil() bool {
-	canNil, isNil := helper.IsNil(v)
+	canNil, isNil := helper.IsNil(v.v)
 	return canNil && isNil
 }
 

@@ -1,4 +1,4 @@
-package stream
+package collections
 
 type Entry[K comparable, V any] struct {
 	key   K
