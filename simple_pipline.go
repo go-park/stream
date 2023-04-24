@@ -1,76 +1,137 @@
 package stream
 
 import (
+	"context"
 	"sort"
+	"sync"
 
 	"github.com/go-park/stream/internal/helper"
 	"github.com/go-park/stream/support/function"
 	"github.com/go-park/stream/support/optional"
+	"github.com/go-park/stream/support/routine"
 )
 
 type SimplePipline[T any] struct {
 	upstream chan T
-	cancel   func()
+	cancel   context.CancelFunc
+	parallel bool
 }
 
 func (p SimplePipline[T]) Close() {
 	p.cancel()
-	p.ForEach(func(_ T) {})
+}
+
+func (p SimplePipline[T]) Parallel() Stream[T] {
+	p.parallel = true
+	return p
+}
+
+func (p SimplePipline[T]) Sequential() Stream[T] {
+	p.parallel = false
+	return p
 }
 
 func (p SimplePipline[T]) Count() int {
-	var count int
-	p.ForEach(
-		func(_ T) {
-			count++
-		})
-	return count
+	acc := func(_ T, i int) int {
+		return i + 1
+	}
+	ch := aggregator(reduce[T, int], acc, 0, p.chunk())
+	return reduce(ch, function.Sum[int], 0).Get()
 }
 
 func (p SimplePipline[T]) ToSlice() []T {
 	var slice []T
-	p.ForEach(
-		func(t T) {
-			slice = append(slice, t)
-		})
+	for v := range p.upstream {
+		slice = append(slice, v)
+	}
 	return slice
 }
 
-func (p SimplePipline[T]) ForEach(fn function.Consumer[T]) {
-	helper.RequireNonNil(fn)
-	source := p.upstream
-	for {
-		select {
-		case v, ok := <-source:
-			if ok {
-				fn(v)
-			} else {
-				return
+func (p SimplePipline[T]) chunk() chan chan T {
+	// serial default
+	chunkNum := 1
+	if p.parallel {
+		chunkNum = GetParallelism()
+	}
+	count := 0
+	chs := make(chan chan T)
+	routine.Run(func() {
+		var slice []chan T
+		defer func() { close(chs) }()
+		for v := range p.upstream {
+			chunk := count % chunkNum
+			if len(slice) == chunk {
+				slice = append(slice, make(chan T))
+				chs <- slice[chunk]
+				defer close(slice[chunk])
 			}
+			slice[chunk] <- v
+			count++
 		}
+	})
+
+	return chs
+}
+
+type reducer[T, R any] func(in chan T, acc function.BiFunc[T, R, R], identify R) optional.Value[R]
+
+func reduce[T, R any](in chan T, acc function.BiFunc[T, R, R], identify R) optional.Value[R] {
+	val := optional.ValOf(identify)
+	for v := range in {
+		val = optional.ValOf(acc.Apply(v, val.Get()))
+	}
+	return val
+}
+
+func aggregator[T, R any](reduce reducer[T, R], acc function.BiFunc[T, R, R], identify R, chs chan chan T) chan R {
+	helper.RequireCanButNonNil(reduce)
+	ch := make(chan R)
+	var wg sync.WaitGroup
+	routine.Run(
+		func() {
+			for source := range chs {
+				wg.Add(1)
+				routine.RunArg(source, func(in chan T) {
+					defer wg.Done()
+					reduce(in, acc, identify).IfNotEmpty(
+						func(t R) {
+							ch <- t
+						})
+				})
+			}
+			wg.Wait()
+			close(ch)
+		})
+	return ch
+}
+
+func (p SimplePipline[T]) ForEach(fn function.Consumer[T]) {
+	helper.RequireCanButNonNil(fn)
+	acc := func(t T, i struct{}) struct{} {
+		fn(t)
+		return struct{}{}
+	}
+	for range aggregator(reduce[T, struct{}], acc, struct{}{}, p.chunk()) {
 	}
 }
 
 func (p SimplePipline[T]) Filter(pred function.Predicate[T]) Stream[T] {
-	helper.RequireNonNil(pred)
-	source := p.upstream
+	helper.RequireCanButNonNil(pred)
 	target := make(chan T)
-	p.upstream = target
-	go func() {
-		defer close(target)
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					if pred.Test(v) {
-						target <- v
-					}
-				} else {
-					return
-				}
-			}
+	acc := func(t T, _ struct{}) struct{} {
+		if pred.Test(t) {
+			target <- t
 		}
-	}()
+		return struct{}{}
+	}
+	ch := aggregator(reduce[T, struct{}], acc, struct{}{}, p.chunk())
+	routine.Run(
+		func() {
+			defer close(target)
+			for range ch {
+			}
+		})
+	p.upstream = target
 	return p
 }
 
@@ -78,23 +139,16 @@ func (p SimplePipline[T]) Limit(i uint) Stream[T] {
 	source := p.upstream
 	target := make(chan T)
 	p.upstream = target
-	go func() {
+	routine.Run(func() {
 		defer close(target)
 		var num uint = 0
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					if num < i {
-						target <- v
-						num++
-					}
-				} else {
-					return
-				}
+		for v := range source {
+			if num < i {
+				target <- v
+				num++
 			}
 		}
-	}()
+	})
 	return p
 }
 
@@ -102,84 +156,65 @@ func (p SimplePipline[T]) Skip(i uint) Stream[T] {
 	source := p.upstream
 	target := make(chan T)
 	p.upstream = target
-	go func() {
+	routine.Run(func() {
 		defer close(target)
 		var num uint = 0
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					if num < i {
-						num++
-					} else {
-						target <- v
-					}
-				} else {
-					return
-				}
+		for v := range source {
+			if num < i {
+				num++
+			} else {
+				target <- v
 			}
 		}
-	}()
+	})
 
 	return p
 }
 
 func (p SimplePipline[T]) Distinct(equals function.BiPredicate[T, T]) Stream[T] {
-	helper.RequireNonNil(equals)
+	helper.RequireCanButNonNil(equals)
 	source := p.upstream
 	target := make(chan T)
 	p.upstream = target
-	go func() {
+	routine.Run(func() {
 		defer close(target)
 		var list []T
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					noneMatch := From(list...).NoneMatch(
-						func(t T) bool {
-							return equals(v, t)
-						})
-					if noneMatch {
-						list = append(list, v)
-					}
-				} else {
-					for _, v := range list {
-						target <- v
-					}
-					return
+		for v := range source {
+			exists := false
+			for _, item := range list {
+				if equals.Test(v, item) {
+					exists = true
+					break
 				}
 			}
+			if !exists {
+				list = append(list, v)
+				target <- v
+			}
 		}
-	}()
+		return
+	})
 	return p
 }
 
 func (p SimplePipline[T]) Sort(less function.BiPredicate[T, T]) Stream[T] {
-	helper.RequireNonNil(less)
+	helper.RequireCanButNonNil(less)
 	source := p.upstream
 	target := make(chan T)
 	p.upstream = target
-	go func() {
+	routine.Run(func() {
 		defer close(target)
 		var list []T
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					list = append(list, v)
-				} else {
-					sort.Slice(list, func(i, j int) bool {
-						return less(list[i], list[j])
-					})
-					for _, v := range list {
-						target <- v
-					}
-					return
-				}
-			}
+		for v := range source {
+			list = append(list, v)
 		}
-	}()
+		sort.Slice(list, func(i, j int) bool {
+			return less(list[i], list[j])
+		})
+		for _, v := range list {
+			target <- v
+		}
+	})
 	return p
 }
 
@@ -187,199 +222,162 @@ func (p SimplePipline[T]) Reverse() Stream[T] {
 	source := p.upstream
 	target := make(chan T)
 	p.upstream = target
-	go func() {
+	routine.Run(func() {
 		defer close(target)
 		var list []T
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					list = append(list, v)
-				} else {
-					for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
-						list[i], list[j] = list[j], list[i]
-					}
-					for _, v := range list {
-						target <- v
-					}
-					return
-				}
-			}
+		for v := range source {
+			list = append(list, v)
 		}
-	}()
+		for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
+			list[i], list[j] = list[j], list[i]
+		}
+		for _, v := range list {
+			target <- v
+		}
+	})
 	return p
 }
 
 func (p SimplePipline[T]) Max(less function.BiPredicate[T, T]) optional.Value[T] {
-	helper.RequireNonNil(less)
-	var max T
-	val := optional.EmptyVal[T]()
-	hasPre := false
-	p.ForEach(func(t T) {
-		if !hasPre {
-			hasPre = true
-			max = t
-		} else {
-			if less.Test(max, t) {
-				max = t
-			}
+	helper.RequireCanButNonNil(less)
+	return p.Reduce(func(t1, t2 T) T {
+		if !less.Test(t1, t2) {
+			return t1
 		}
-		val = optional.ValOf(max)
+		return t2
 	})
-	return val
 }
 
 func (p SimplePipline[T]) Min(less function.BiPredicate[T, T]) optional.Value[T] {
-	helper.RequireNonNil(less)
-	var min T
-	val := optional.EmptyVal[T]()
-	hasPre := false
-	p.ForEach(func(t T) {
-		if !hasPre {
-			hasPre = true
-			min = t
-		} else {
-			if less.Test(t, min) {
-				min = t
-			}
+	helper.RequireCanButNonNil(less)
+	return p.Reduce(func(t1, t2 T) T {
+		if less.Test(t1, t2) {
+			return t1
 		}
-		val = optional.ValOf(min)
+		return t2
 	})
-	return val
 }
 
-func (p SimplePipline[T]) Map(fn function.Fn[T, T]) Stream[T] {
-	helper.RequireNonNil(fn)
+func (p SimplePipline[T]) Map(mapper function.Func[T, T]) Stream[T] {
+	helper.RequireCanButNonNil(mapper)
 	target := make(chan T)
-	source := p.upstream
-	p.upstream = target
-	go func() {
-		defer close(target)
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					target <- fn(v)
-				} else {
-					return
-				}
+	acc := func(t T, _ struct{}) struct{} {
+		target <- mapper(t)
+		return struct{}{}
+	}
+	ch := aggregator(reduce[T, struct{}], acc, struct{}{}, p.chunk())
+	routine.Run(
+		func() {
+			defer close(target)
+			for range ch {
 			}
-		}
-	}()
+		})
+	p.upstream = target
 	return p
 }
 
-func (p SimplePipline[T]) Reduce(acc function.BiFn[T, T, T]) optional.Value[T] {
-	helper.RequireNonNil(acc)
-	var res T
-	val := optional.EmptyVal[T]()
-	hasPre := false
-	p.ForEach(func(t T) {
-		if !hasPre {
-			hasPre = true
-			res = t
-		} else {
-			res = acc.Apply(res, t)
+func (p SimplePipline[T]) Reduce(acc function.BiFunc[T, T, T]) optional.Value[T] {
+	helper.RequireCanButNonNil(acc)
+	reduce := func(in chan T, acc function.BiFunc[T, T, T], _ T) optional.Value[T] {
+		val := optional.EmptyVal[T]()
+		for v := range in {
+			val.IfNotEmptyOrElse(
+				func(t T) { val = optional.ValOf(acc.Apply(v, t)) },
+				func() { val = optional.ValOf(v) })
 		}
-		val = optional.ValOf(res)
-	})
-	return val
+		return val
+	}
+	var identify T
+	ch := aggregator(reduce, acc, identify, p.chunk())
+	return reduce(ch, acc, identify)
 }
 
-func (p SimplePipline[T]) MapToAny(fn function.Fn[T, any]) Stream[any] {
-	helper.RequireNonNil(fn)
-	source := p.upstream
+func (p SimplePipline[T]) MapToAny(mapper function.Func[T, any]) Stream[any] {
+	helper.RequireCanButNonNil(mapper)
 	target := make(chan any)
-	anyPipe := SimplePipline[any]{
-		upstream: target,
+	acc := func(t T, _ struct{}) struct{} {
+		target <- mapper(t)
+		return struct{}{}
 	}
-	go func() {
-		defer close(target)
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					target <- fn(v)
-				} else {
-					return
-				}
+	ch := aggregator(reduce[T, struct{}], acc, struct{}{}, p.chunk())
+	routine.Run(
+		func() {
+			defer close(target)
+			for range ch {
 			}
-		}
-	}()
-	return anyPipe
+		})
+	return SimplePipline[any]{
+		upstream: target,
+		cancel:   p.cancel,
+		parallel: p.parallel,
+	}
 }
 
-func (p SimplePipline[T]) MapToString(fn function.Fn[T, string]) Stream[string] {
-	helper.RequireNonNil(fn)
-	source := p.upstream
+func (p SimplePipline[T]) MapToString(mapper function.Func[T, string]) Stream[string] {
+	helper.RequireCanButNonNil(mapper)
 	target := make(chan string)
-	strPipe := SimplePipline[string]{
-		upstream: target,
+	acc := func(t T, _ struct{}) struct{} {
+		target <- mapper(t)
+		return struct{}{}
 	}
-	go func() {
-		defer close(target)
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					target <- fn(v)
-				} else {
-					return
-				}
+	ch := aggregator(reduce[T, struct{}], acc, struct{}{}, p.chunk())
+	routine.Run(
+		func() {
+			defer close(target)
+			for range ch {
 			}
-		}
-	}()
-	return strPipe
+		})
+	return SimplePipline[string]{
+		upstream: target,
+		cancel:   p.cancel,
+		parallel: p.parallel,
+	}
 }
 
-func (p SimplePipline[T]) MapToInt(fn function.Fn[T, int]) Stream[int] {
-	helper.RequireNonNil(fn)
-	source := p.upstream
+func (p SimplePipline[T]) MapToInt(mapper function.Func[T, int]) Stream[int] {
+	helper.RequireCanButNonNil(mapper)
 	target := make(chan int)
-	intPipe := SimplePipline[int]{
-		upstream: target,
+	acc := func(t T, _ struct{}) struct{} {
+		target <- mapper(t)
+		return struct{}{}
 	}
-	go func() {
-		defer close(target)
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					target <- fn(v)
-				} else {
-					return
-				}
+	ch := aggregator(reduce[T, struct{}], acc, struct{}{}, p.chunk())
+	routine.Run(
+		func() {
+			defer close(target)
+			for range ch {
 			}
-		}
-	}()
-	return intPipe
+		})
+	return SimplePipline[int]{
+		upstream: target,
+		cancel:   p.cancel,
+		parallel: p.parallel,
+	}
 }
 
-func (p SimplePipline[T]) MapToFloat(fn function.Fn[T, float64]) Stream[float64] {
-	helper.RequireNonNil(fn)
-	source := p.upstream
+func (p SimplePipline[T]) MapToFloat(mapper function.Func[T, float64]) Stream[float64] {
+	helper.RequireCanButNonNil(mapper)
 	target := make(chan float64)
-	floatPipe := SimplePipline[float64]{
-		upstream: target,
+	acc := func(t T, _ struct{}) struct{} {
+		target <- mapper(t)
+		return struct{}{}
 	}
-	go func() {
-		defer close(target)
-		for {
-			select {
-			case v, ok := <-source:
-				if ok {
-					target <- fn(v)
-				} else {
-					return
-				}
+	ch := aggregator(reduce[T, struct{}], acc, struct{}{}, p.chunk())
+	routine.Run(
+		func() {
+			defer close(target)
+			for range ch {
 			}
-		}
-	}()
-	return floatPipe
+		})
+	return SimplePipline[float64]{
+		upstream: target,
+		cancel:   p.cancel,
+		parallel: p.parallel,
+	}
 }
 
 func (p SimplePipline[T]) AnyMatch(pred function.Predicate[T]) bool {
-	helper.RequireNonNil(pred)
+	helper.RequireCanButNonNil(pred)
 	match := false
 	p.ForEach(func(t T) {
 		if pred.Test(t) {
@@ -391,7 +389,7 @@ func (p SimplePipline[T]) AnyMatch(pred function.Predicate[T]) bool {
 }
 
 func (p SimplePipline[T]) AllMatch(pred function.Predicate[T]) bool {
-	helper.RequireNonNil(pred)
+	helper.RequireCanButNonNil(pred)
 	match := true
 	p.ForEach(func(t T) {
 		if !pred.Test(t) {
@@ -403,7 +401,7 @@ func (p SimplePipline[T]) AllMatch(pred function.Predicate[T]) bool {
 }
 
 func (p SimplePipline[T]) NoneMatch(pred function.Predicate[T]) bool {
-	helper.RequireNonNil(pred)
+	helper.RequireCanButNonNil(pred)
 	match := false
 	p.ForEach(func(t T) {
 		if pred.Test(t) {
@@ -412,4 +410,13 @@ func (p SimplePipline[T]) NoneMatch(pred function.Predicate[T]) bool {
 		}
 	})
 	return !match
+}
+
+func (p SimplePipline[T]) FindAny() optional.Value[T] {
+	source := p.upstream
+	r := optional.EmptyVal[T]()
+	if v, ok := <-source; ok {
+		r = optional.ValOf(v)
+	}
+	return r
 }

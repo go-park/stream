@@ -17,21 +17,21 @@ func (fn Predicate[T]) Test(t T) bool {
 }
 
 func (fn Predicate[T]) And(other Predicate[T]) Predicate[T] {
-	helper.RequireNonNil(other)
+	helper.RequireCanButNonNil(other)
 	return func(t T) bool {
 		return fn.Test(t) && other.Test(t)
 	}
 }
 
 func (fn Predicate[T]) Or(other Predicate[T]) Predicate[T] {
-	helper.RequireNonNil(other)
+	helper.RequireCanButNonNil(other)
 	return func(t T) bool {
 		return fn.Test(t) || other.Test(t)
 	}
 }
 
 func (fn Predicate[T]) Not(other Predicate[T]) Predicate[T] {
-	helper.RequireNonNil(other)
+	helper.RequireCanButNonNil(other)
 	return other.Negate()
 }
 
@@ -52,14 +52,14 @@ func (fn BiPredicate[T, U]) Test(t T, u U) bool {
 }
 
 func (fn BiPredicate[T, U]) And(other BiPredicate[T, U]) BiPredicate[T, U] {
-	helper.RequireNonNil(other)
+	helper.RequireCanButNonNil(other)
 	return func(t T, u U) bool {
 		return fn.Test(t, u) && other.Test(t, u)
 	}
 }
 
 func (fn BiPredicate[T, U]) Or(other BiPredicate[T, U]) BiPredicate[T, U] {
-	helper.RequireNonNil(other)
+	helper.RequireCanButNonNil(other)
 	return func(t T, u U) bool {
 		return fn.Test(t, u) || other.Test(t, u)
 	}

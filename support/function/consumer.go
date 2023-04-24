@@ -9,6 +9,6 @@ func (fn Consumer[T]) Accept(t T) {
 }
 
 func (fn Consumer[T]) AndThen(after Consumer[T]) Consumer[T] {
-	helper.RequireNonNil(after)
+	helper.RequireCanButNonNil(after)
 	return func(t T) { fn.Accept(t); after.Accept(t) }
 }

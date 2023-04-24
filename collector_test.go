@@ -5,7 +5,7 @@ import (
 
 	"github.com/go-park/stream"
 	"github.com/go-park/stream/support/collections"
-	"gotest.tools/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestMap(t *testing.T) {
@@ -53,8 +53,8 @@ func TestMap(t *testing.T) {
 			}
 			list := kvStream.ToSlice()
 			for i, vv := range v.wantList {
-				assert.Equal(t, vv.Key(), list[i].Key())
-				assert.DeepEqual(t, vv.Value(), list[i].Value())
+				assert.Equal(t, list[i].Key(), vv.Key())
+				assert.Equal(t, list[i].Value(), vv.Value())
 			}
 		})
 	}
@@ -102,7 +102,7 @@ func TestToMap(t *testing.T) {
 			s := stream.From(v.list...)
 			if v.key != nil && v.value != nil {
 				hash := stream.ToMap(s, v.key, v.value)
-				assert.DeepEqual(t, hash, v.wantMap)
+				assert.Equal(t, v.wantMap, hash)
 			}
 		})
 	}
@@ -113,33 +113,33 @@ func TestConstraintOp(t *testing.T) {
 	t.Run("distinct", func(t *testing.T) {
 		list := []int{1, 2, 3, 1, 2, 3, 4, 4, 5, 6, 7, 8, 9, 9}
 		s := stream.Distinct(stream.From(list...))
-		assert.DeepEqual(t, s.ToSlice(), []int{1, 2, 3, 4, 5, 6, 7, 8, 9})
+		assert.Equal(t, []int{1, 2, 3, 4, 5, 6, 7, 8, 9}, s.ToSlice())
 	})
 	// sort
 	t.Run("sort", func(t *testing.T) {
 		list := []int{1, 4, 7, 2, 5, 8, 3, 6, 9}
 		s := stream.Sort(stream.From(list...))
-		assert.DeepEqual(t, s.ToSlice(), []int{1, 2, 3, 4, 5, 6, 7, 8, 9})
+		assert.Equal(t, []int{1, 2, 3, 4, 5, 6, 7, 8, 9}, s.ToSlice())
 	})
 
 	// reverse
 	t.Run("reverse", func(t *testing.T) {
 		list := []int{1, 4, 7, 2, 5, 8, 3, 6, 9}
 		s := stream.Sort(stream.From(list...)).Reverse()
-		assert.DeepEqual(t, s.ToSlice(), []int{9, 8, 7, 6, 5, 4, 3, 2, 1})
+		assert.Equal(t, []int{9, 8, 7, 6, 5, 4, 3, 2, 1}, s.ToSlice())
 	})
 
 	// max
 	t.Run("max", func(t *testing.T) {
 		list := []int{1, 4, 7, 2, 5, 8, 3, 6, 9}
 		s := stream.Max(stream.From(list...))
-		assert.DeepEqual(t, s.Get(), 9)
+		assert.Equal(t, 9, s.Get())
 	})
 
 	// min
 	t.Run("min", func(t *testing.T) {
 		list := []int{1, 4, 7, 2, 5, 8, 3, 6, 9}
 		s := stream.Min(stream.From(list...))
-		assert.DeepEqual(t, s.Get(), 1)
+		assert.Equal(t, 1, s.Get())
 	})
 }

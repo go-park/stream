@@ -6,8 +6,9 @@ import (
 	"testing"
 
 	"github.com/go-park/stream"
+	"github.com/go-park/stream/support/collections"
 	"github.com/go-park/stream/support/function"
-	"gotest.tools/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 type TestData[T any] struct {
@@ -20,8 +21,8 @@ type TestData[T any] struct {
 	equals       function.BiPredicate[T, T]
 	less         function.BiPredicate[T, T]
 	reverse      bool
-	mapper       function.Fn[T, T]
-	reducer      function.BiFn[T, T, T]
+	mapper       function.Func[T, T]
+	reducer      function.BiFunc[T, T, T]
 	mapperAny    func(t T) any
 	mapperString func(t T) string
 	mapperInt    func(t T) int
@@ -47,7 +48,33 @@ type TestData[T any] struct {
 	wantBool       bool
 }
 
-func TestSimplePipline(t *testing.T) {
+func TestDemo(t *testing.T) {
+	slice := []int{1, 2, 3, 4, 5, 61, 7, 8, 9, 10, 11, 19}
+	val := stream.From(slice...).
+		Filter(func(t int) bool { return t > 2 }).
+		Skip(2).Limit(2).
+		Map(func(i int) int {
+			return i + 1
+		}).
+		Reduce(func(i1, i2 int) int { return i1 + i2 })
+	val.IfNotEmptyOrElse(
+		func(v int) { assert.Equal(t, v, 5+1+61+1) },
+		func() { t.Error("empty") })
+}
+
+func TestPipline(t *testing.T) {
+	t.Run("fast-sequential", func(t *testing.T) {
+		testPipline(t, false, false)
+	})
+	t.Run("simple-sequential", func(t *testing.T) {
+		testPipline(t, true, false)
+	})
+	t.Run("simple-parallel", func(t *testing.T) {
+		testPipline(t, true, true)
+	})
+}
+
+func testPipline(t *testing.T, simple, parallel bool) {
 	intTests := []TestData[int]{
 		{
 			name:      "count",
@@ -168,7 +195,10 @@ func TestSimplePipline(t *testing.T) {
 			mapper: func(t int) int {
 				return t + 1
 			},
-			wantList: []int{3, 4, 5, 7, 2, 8, 1, 2, 9, 6},
+			less: func(i, j int) bool {
+				return i < j
+			},
+			wantList: []int{1, 2, 2, 3, 4, 5, 6, 7, 8, 9},
 		},
 		{
 			name: "reduce",
@@ -192,7 +222,7 @@ func TestSimplePipline(t *testing.T) {
 			mapperAny: func(t int) any {
 				return fmt.Sprintf("%d", t)
 			},
-			wantAnyList: []any{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"},
+			wantAnyList: []any{"1", "10", "2", "3", "4", "5", "6", "7", "8", "9"},
 		},
 		{
 			name: "mapperString",
@@ -200,7 +230,7 @@ func TestSimplePipline(t *testing.T) {
 			mapperString: func(t int) string {
 				return fmt.Sprintf("%d", t)
 			},
-			wantStringList: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"},
+			wantStringList: []string{"1", "10", "2", "3", "4", "5", "6", "7", "8", "9"},
 		},
 		{
 			name: "mapperInt",
@@ -269,9 +299,16 @@ func TestSimplePipline(t *testing.T) {
 	}
 	for _, v := range intTests {
 		t.Run(v.name, func(t *testing.T) {
-			pStream := stream.From(v.list...)
+			builder := stream.Builder[int]().Source(v.list...)
+			pStream := builder.Build()
+			if simple {
+				pStream = builder.Simple()
+			}
+			if parallel {
+				pStream = pStream.Parallel()
+			}
 			if v.count {
-				assert.Equal(t, pStream.Count(), len(v.list))
+				assert.Equal(t, len(v.list), pStream.Count())
 			}
 			if v.filter != nil {
 				pStream = pStream.Filter(v.filter)
@@ -284,18 +321,45 @@ func TestSimplePipline(t *testing.T) {
 			}
 			if v.max != nil {
 				val := pStream.Max(v.max)
-				assert.Equal(t, val.IsEmpty(), false)
-				assert.Equal(t, val.IsNil(), false)
-				assert.DeepEqual(t, val.Get(), v.wantValue)
+				assert.Equal(t, false, val.IsEmpty())
+				assert.Equal(t, false, val.IsNil())
+				assert.Equal(t, v.wantValue, val.Get())
 			}
 			if v.min != nil {
 				val := pStream.Min(v.min)
-				assert.Equal(t, val.IsEmpty(), false)
-				assert.Equal(t, val.IsNil(), false)
-				assert.DeepEqual(t, val.Get(), v.wantValue)
+				assert.Equal(t, false, val.IsEmpty())
+				assert.Equal(t, false, val.IsNil())
+				assert.Equal(t, v.wantValue, val.Get())
 			}
 			if v.equals != nil {
 				pStream = pStream.Distinct(v.equals)
+			}
+			if v.mapper != nil {
+				pStream = pStream.Map(v.mapper)
+			}
+			if v.reducer != nil {
+				val := pStream.Reduce(v.reducer)
+				assert.Equal(t, v.wantValue, val.Get())
+			}
+			if v.mapperAny != nil {
+				anyStream := pStream.MapToAny(v.mapperAny).
+					Sort(func(t, u any) bool { return t.(string) < u.(string) })
+				assert.Equal(t, v.wantAnyList, anyStream.ToSlice())
+			}
+			if v.mapperString != nil {
+				strStream := pStream.MapToString(v.mapperString).
+					Sort(func(t, u string) bool { return t < u })
+				assert.Equal(t, v.wantStringList, strStream.ToSlice())
+			}
+			if v.mapperInt != nil {
+				intStream := pStream.MapToInt(v.mapperInt).
+					Sort(func(t, u int) bool { return t < u })
+				assert.Equal(t, v.wantIntList, intStream.ToSlice())
+			}
+			if v.mapperFloat != nil {
+				floatStream := pStream.MapToFloat(v.mapperFloat).
+					Sort(func(t, u float64) bool { return t < u })
+				assert.Equal(t, v.wantFloatList, floatStream.ToSlice(), v.wantFloatList)
 			}
 			if v.less != nil {
 				pStream = pStream.Sort(v.less)
@@ -303,58 +367,62 @@ func TestSimplePipline(t *testing.T) {
 			if v.reverse {
 				pStream = pStream.Reverse()
 			}
-			if v.mapper != nil {
-				pStream = pStream.Map(v.mapper)
-			}
-			if v.reducer != nil {
-				val := pStream.Reduce(v.reducer)
-				assert.Equal(t, val.IsEmpty(), false)
-				assert.Equal(t, val.IsNil(), false)
-				assert.DeepEqual(t, val.Get(), v.wantValue)
-			}
-			if v.mapperAny != nil {
-				anyStream := pStream.MapToAny(v.mapperAny)
-				assert.DeepEqual(t, anyStream.ToSlice(), v.wantAnyList)
-			}
-			if v.mapperString != nil {
-				strStream := pStream.MapToString(v.mapperString)
-				assert.DeepEqual(t, strStream.ToSlice(), v.wantStringList)
-			}
-			if v.mapperInt != nil {
-				intStream := pStream.MapToInt(v.mapperInt)
-				assert.DeepEqual(t, intStream.ToSlice(), v.wantIntList)
-			}
-			if v.mapperFloat != nil {
-				floatStream := pStream.MapToFloat(v.mapperFloat)
-				assert.DeepEqual(t, floatStream.ToSlice(), v.wantFloatList)
-			}
 			if v.anyMatcher != nil {
 				b := pStream.AnyMatch(v.anyMatcher)
-				assert.Equal(t, b, v.wantBool)
+				assert.Equal(t, v.wantBool, b)
 			}
 			if v.allMatcher != nil {
 				b := pStream.AllMatch(v.allMatcher)
-				assert.Equal(t, b, v.wantBool)
+				assert.Equal(t, v.wantBool, b)
 			}
 			if v.noneMatcher != nil {
 				b := pStream.NoneMatch(v.noneMatcher)
-				assert.Equal(t, b, v.wantBool)
+				assert.Equal(t, v.wantBool, b)
 			}
-			assert.DeepEqual(t, pStream.ToSlice(), v.wantList)
+			assert.Equal(t, v.wantList, pStream.ToSlice())
 		})
 	}
 }
 
-func TestDemo(t *testing.T) {
-	slice := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
-	v := stream.From(slice...).
-		Filter(func(t int) bool { return t > 2 }).
-		Skip(2).Limit(2).
-		Map(func(i int) int {
-			return i + 1
-		}).
-		Reduce(func(i1, i2 int) int {
-			return i1 + i2
-		})
-	v.IfNotEmpty(func(t int) { println(t) })
+func BenchmarkPipeline(b *testing.B) {
+	var slice []int
+	for i := range make([]struct{}, 1000) {
+		slice = append(slice, i)
+	}
+
+	b.ResetTimer()
+	b.Run("direct-sum", func(b *testing.B) {
+		var r int
+		for n := 0; n < b.N; n++ {
+			collections.IterableSlice(slice...).ForEachRemaining(
+				func(t int) {
+					r += t
+				},
+			)
+		}
+	})
+
+	b.Run("fast-serial-sum", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			stream.From(slice...).Reduce(func(i1, i2 int) int { return i1 + i2 })
+		}
+	})
+
+	// b.Run("fast-parallel-sum", func(b *testing.B) {
+	// 	for n := 0; n < b.N; n++ {
+	// 		stream.From(slice...).Parallel().Reduce(func(i1, i2 int) int { return i1 + i2 })
+	// 	}
+	// })
+
+	b.Run("simple-serial-sum", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			stream.Builder[int]().Source(slice...).Simple().Reduce(func(i1, i2 int) int { return i1 + i2 })
+		}
+	})
+
+	b.Run("simple-parallel-sum", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			stream.Builder[int]().Source(slice...).Simple().Parallel().Reduce(func(i1, i2 int) int { return i1 + i2 })
+		}
+	})
 }

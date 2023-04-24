@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/go-park/stream/support/function"
-	"gotest.tools/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSupplier(t *testing.T) {
@@ -13,5 +13,5 @@ func TestSupplier(t *testing.T) {
 	}
 	supplier := function.Supplier[int](fn)
 	result := supplier.Get()
-	assert.Equal(t, result, 5)
+	assert.Equal(t, 5, result)
 }

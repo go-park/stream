@@ -2,6 +2,12 @@ package helper
 
 import "reflect"
 
+func RequireCanButNonNil(arg any) {
+	if arg == nil {
+		panic("unexpected nil pointer")
+	}
+}
+
 func RequireNonNil(arg any) {
 	RequireNonNilMsg(arg, "unexpected nil pointer")
 }

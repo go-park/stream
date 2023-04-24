@@ -15,43 +15,75 @@ type iterator[T any] func() (func() bool, function.Supplier[T])
 
 func (iter iterator[T]) HasNext() bool {
 	hasNext, _ := iter()
-	helper.RequireNonNil(hasNext)
-
 	return hasNext()
 }
 
 func (iter iterator[T]) Next() T {
 	_, next := iter()
-	helper.RequireNonNil(next)
-
 	return next()
 }
 
 func (iter iterator[T]) ForEachRemaining(fn function.Consumer[T]) {
-	helper.RequireNonNil(fn)
+	helper.RequireCanButNonNil(fn)
 	hasNext, next := iter()
-	helper.RequireNonNil(hasNext)
-	helper.RequireNonNil(next)
-
 	for hasNext() {
 		fn(next())
 	}
 }
 
-func ToIterator[T any](list ...T) Iterator[T] {
+type iterableSlice[T any] struct {
+	slice []T
+}
+
+func (s *iterableSlice[T]) HasNext() bool {
+	return len(s.slice) > 0
+}
+
+func (s *iterableSlice[T]) Next() T {
+	var v T
+	if len(s.slice) > 1 {
+		v, s.slice = s.slice[0], s.slice[1:]
+		return v
+	}
+	if len(s.slice) == 1 {
+		v, s.slice = s.slice[0], nil
+		return v
+	}
+	return v
+}
+
+func (s *iterableSlice[T]) ForEachRemaining(fn function.Consumer[T]) {
+	for s.HasNext() {
+		fn(s.Next())
+	}
+}
+
+func IterableSlice[T any](list ...T) Iterator[T] {
+	return &iterableSlice[T]{list}
+}
+
+func IterableChan[T any](ch chan T) Iterator[T] {
 	// escape to heap
-	index, remainNum := 0, len(list)
+	ready := false
+	var value T
 	return iterator[T](
 		func() (func() bool, function.Supplier[T]) {
 			hasNext := func() bool {
-				return remainNum > 0
+				if ready {
+					return true
+				}
+				v, ok := <-ch
+				if ok {
+					ready = true
+					value = v
+				}
+				return false
 			}
 			next := func() T {
+				defer func() { ready = false }()
 				var v T
 				if hasNext() {
-					remainNum--
-					v = list[index]
-					index++
+					v = value
 				}
 				return v
 			}
@@ -60,7 +92,6 @@ func ToIterator[T any](list ...T) Iterator[T] {
 	)
 }
 
-// func
-// type iterator[T any] struct{
-
-// }
+func Iterable[T any](iter iterator[T]) Iterator[T] {
+	return iter
+}
