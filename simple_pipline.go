@@ -57,13 +57,17 @@ func (p SimplePipline[T]) chunk() chan chan T {
 	chs := make(chan chan T)
 	routine.Run(func() {
 		var slice []chan T
-		defer func() { close(chs) }()
+		defer func() {
+			for _, ch := range slice {
+				close(ch)
+			}
+			close(chs)
+		}()
 		for v := range p.upstream {
 			chunk := count % chunkNum
 			if len(slice) == chunk {
 				slice = append(slice, make(chan T))
 				chs <- slice[chunk]
-				defer close(slice[chunk])
 			}
 			slice[chunk] <- v
 			count++
@@ -192,7 +196,6 @@ func (p SimplePipline[T]) Distinct(equals function.BiPredicate[T, T]) Stream[T] 
 				target <- v
 			}
 		}
-		return
 	})
 	return p
 }

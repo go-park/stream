@@ -2,6 +2,8 @@ package helper
 
 import "reflect"
 
+type Empty struct{}
+
 func RequireCanButNonNil(arg any) {
 	if arg == nil {
 		panic("unexpected nil pointer")

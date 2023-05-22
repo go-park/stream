@@ -1,5 +1,7 @@
 package collections
 
+import "github.com/go-park/stream/internal/helper"
+
 type Entry[K comparable, V any] struct {
 	key   K
 	value V
@@ -49,4 +51,28 @@ func GetEntrySet[M ~map[K]V, S EntrySet[K, V], K comparable, V any](m M) S {
 		set = append(set, entry)
 	}
 	return set
+}
+
+func KeySet[M ~map[K]V, K comparable, V any](m M) Set[K] {
+	elements := make(map[K]helper.Empty)
+	for k := range m {
+		elements[k] = helper.Empty{}
+	}
+	return toSet(elements)
+}
+
+func Keys[M ~map[K]V, K comparable, V any](m M) []K {
+	res := make([]K, 0, len(m))
+	for k := range m {
+		res = append(res, k)
+	}
+	return res
+}
+
+func Values[M ~map[K]V, K comparable, V any](m M) []V {
+	res := make([]V, 0, len(m))
+	for _, v := range m {
+		res = append(res, v)
+	}
+	return res
 }

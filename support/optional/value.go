@@ -29,7 +29,6 @@ func (v Value[T]) IfNotEmpty(fn function.Consumer[T]) {
 		helper.RequireCanButNonNil(fn)
 		fn.Accept(v.v)
 	}
-	return
 }
 
 func (v Value[T]) IfNotEmptyOrElse(fn function.Consumer[T], runner function.Runner) {
@@ -40,7 +39,6 @@ func (v Value[T]) IfNotEmptyOrElse(fn function.Consumer[T], runner function.Runn
 		helper.RequireCanButNonNil(runner)
 		runner.Run()
 	}
-	return
 }
 
 func (v Value[T]) IsNil() bool {
